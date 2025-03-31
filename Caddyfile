@@ -1,0 +1,206 @@
+# 全局选项
+{
+    # 全局使用alidns
+    acme_dns alidns {
+                access_key_id 2znPBAveMAhVV5A75CTuaq
+                access_key_secret 3Tf2oG2UonBCC4AQsfzytr3BxUMQ6La2D
+        }
+    # 使用dnspod token
+    # acme_dns dnspod 37456,ejbe9tb5tiasjz2yu5u688vrwegpm
+    # 使用腾讯云api
+    # acme_dns tencentcloud {
+    # secret_id AKIDJYqOA3qfTPKqC5u688vrweglaK81CGSc
+    # secret_key Rm1GXm65u688vrwe3312NrIi4I4325mxFf
+    #}
+    # 使用cloudflare api token
+    # acme_dns cloudflare v3ipam6idiwcmfub4iee4yjqyvykx
+}
+  # 储存目录默认映射
+  storage file_system /data/cert
+  # 注意storage目录文件默认权限不允许其他人访问
+  # 如果需要被其他程序访问，可以自己手动chmod -R
+
+  # disable_redirects关闭http自动重定向，可避免出现80端口占用问题（可手动加重定向配置）
+  # prefer_wildcard优先使用通配符证书，当配置有通配符证书时跳过申请其他证书
+  auto_https prefer_wildcard disable_redirects
+  
+  # 尝试申请Google CA
+  # 你需要到Google获取eab key来使用，详见：https://pki.goog/
+  # eab key仅仅是使用这个服务的权限与域名无关，不管是哪个账号申请，都是通用的
+  # 申请eab key不用7天自动过期
+  # eab是用来注册的用户，注册完成可以不要
+  # eab用了之后备份acme/dv.acme-v02.api.pki.goog-directory/users即可
+  # 注意：你需要自己解决https://dv.acme-v02.api.pki.goog/的科学访问
+  # email exmaple@gmail.com
+  # cert_issuer acme https://dv.acme-v02.api.pki.goog/directory  {
+  #       eab <EAB_密钥_ID>  <EAB_HMAC_密钥>
+  #   }
+  #   失败回退常规acme
+  #   cert_issuer acme
+  
+  # 屏幕打印日志，需要调试的时候可打开
+  # log {
+  #        output stdout
+  #        format console
+  #        level debug
+  #    }
+}
+
+# 申请通配符证书，并反向代理到https://192.168.1.123，忽略https自签验证
+*.example.com {
+        reverse_proxy https://192.168.1.123 {
+          transport http {
+                  tls
+                   tls_insecure_skip_verify
+           }
+        }
+}
+
+# 域名选项
+
+# 单个域名反向代理，bind设置监听172.26.25.24地址，端口18888
+admin.example.com:18888 {
+bind 172.26.25.24
+        reverse_proxy https://192.168.1.2:8888 {
+           transport http {
+                  tls
+                  tls_insecure_skip_verify
+           }
+        }
+}
+# 把http请求重定向到https
+http://admin.example.com:80 {
+bind 172.26.25.24
+redir * https://admin.example.com:18888 301
+}
+
+# 绑定多个域名
+mail.example.com:1080 mail.example.lan:1080 {
+        reverse_proxy http://192.168.1.201:18080 
+}
+
+# 静态文件服务/data/www，并且example.org/admin反向代理到http://127.0.0.1:8080
+example.org {
+        root * /data/www
+        encode gzip
+        file_server
+        redir /admin  /admin/ 301
+        reverse_proxy /admin/* http://127.0.0.1:8080 {
+        header_up X-Real-IP {remote_host}
+        }
+}
+
+# 静态文件服务/data/blog，自定义404页面
+blog.example.org {
+        root * /data/blog
+        encode gzip
+        file_server
+        handle_errors {
+                @404 {
+                        expression {http.error.status_code} == 404
+                }
+                rewrite @404 404.html
+                file_server
+        }
+}
+
+# 首页反向代理127.0.0.1:8989，但重定向所有jpg后缀到另一个网站，其他请求回应404
+www.example.org {
+        reverse_proxy 127.0.0.1:8989
+        redir /*.jpg https://img.example.org/post{uri} permanent
+        respond  404
+}
+
+# 仅使用http
+http://no.example.net {
+    respond "Hello word !"
+}
+
+# 单独设置证书
+ali.example.net {
+    respond "Hello word !"
+    tls {
+         dns alidns {
+           access_key_id 4cyPa9zBaCZAGS86qxTMz
+           access_key_secret 4ypt8XM9cF3dGds5U7R7wQhWSJLoaMYCP
+        }
+    }
+}
+cf.example.net {
+    respond "Hello word !"
+    tls {
+	    dns cloudflare kKMZgemtLrEpiG5r9igPPKRN6himKVau2iFbi
+    }
+}
+dnspod.example.net {
+    respond "Hello word !"
+    tls {
+     dns dnspod 45674,643mzcxv4k9c77rqqge4wocyydsn6
+    }
+}
+
+# 手动指定外部证书，从/data/pems目录价值所有.pem文件
+sign.cf.example.net {
+    tls {
+      load /data/pems
+    }
+}
+
+# 添加header 例如HSTS
+apple.exampe.com {
+        header Strict-Transport-Security max-age=63072000
+        respond "Hello HSTS !"
+}
+
+# 综合示例，复用URL
+nas.example.com {
+
+# 访问nas.example.com/blog，提供/data/blog目录的静态文件
+        handle /blog/* {
+                file_server {
+                        root /data/
+                }
+        }
+# 重定向不带/的路径到/
+        redir /blog  /blog/ 301
+
+# 访问nas.example.com/jsonrpc，代理aria2的jsonrpc
+        handle /jsonrpc {
+                reverse_proxy http://192.168.1.123:6800 
+        }
+
+# 访问nas.example.com/plex，代理plex服务
+## 使用uri strip_prefix可以把请求中的/plex路径去掉
+        handle /plex/* {
+                uri strip_prefix /plex
+                reverse_proxy  http://127.0.0.1:32400
+        }
+# 处理plex静态引用的web目录
+        handle /web/* {
+                reverse_proxy  http://127.0.0.1:32400
+        }
+# 重定向不带/的路径到/
+          redir /plex  /plex/ 301
+
+# 处理plex静态引用的media目录
+        handle /media/* {
+                reverse_proxy  http://127.0.0.1:32400
+        }
+
+# 代理nas的web管理服务 
+        reverse_proxy * https://127.0.0.1:5001 {
+                transport http {
+                        tls
+                        tls_insecure_skip_verify
+                }
+        }
+
+ # 反向镜像代理，添加header_up       
+        redir /trends  /trends/ 301
+        handle /trends/* {
+                uri strip_prefix /trends
+                        reverse_proxy  https://trends.google.com {
+                        header_up Host trends.google.com
+                }
+        }
+  }
